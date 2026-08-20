@@ -3,7 +3,7 @@
  * isolated home and a port that is never 3080.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { chmodSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -30,6 +30,9 @@ export interface LibraryHost {
   port: number
   url: string
   close: () => Promise<void>
+  /** Always bun: this host is the harness process, not a Node child. */
+  engine: 'bun'
+  pid: number
 }
 
 function assertNotLivePort(port: number): void {
@@ -56,6 +59,14 @@ export function resolveDshBin(): string {
     if (candidate && existsSync(candidate)) return candidate
   }
   throw new Error('library-boot: dsh binary not found')
+}
+
+/** The Bun executable that must own the harness process. */
+export function resolveBunBin(): string {
+  if (typeof process.versions.bun === 'string') return process.execPath
+  const bun = join(homedir(), '.bun/bin/bun')
+  if (existsSync(bun)) return bun
+  throw new Error('library-boot requires bun (will not spawn node)')
 }
 
 function waitForReady(child: ChildProcess, log: { text: string }): Promise<{ url: string; port: number }> {
@@ -104,6 +115,10 @@ export async function startLibraryHost(options: LibraryBootOptions): Promise<Lib
   assertNotLivePort(options.port)
   assertIsolatedHome(options.home)
 
+  const cred = join(options.home, '.credentials.yaml')
+  if (existsSync(cred)) chmodSync(cred, 0o600)
+
+  const bunBin = resolveBunBin()
   const dshBin = options.dshBin ?? resolveDshBin()
   const trustedHosts = [...new Set([
     DEFAULT_TRUSTED_HOST,
@@ -117,7 +132,7 @@ export async function startLibraryHost(options: LibraryBootOptions): Promise<Lib
     ...trustedHosts.flatMap(host => ['--trusted-host', host]),
   ]
   const log = { text: '' }
-  const child = spawn('node', args, {
+  const child = spawn(bunBin, args, {
     env: {
       ...process.env,
       DSH_HOME: options.home,
@@ -127,9 +142,13 @@ export async function startLibraryHost(options: LibraryBootOptions): Promise<Lib
   })
   try {
     const ready = await waitForReady(child, log)
+    const pid = child.pid
+    if (pid === undefined) throw new Error('library-boot: bun harness has no pid')
     return {
       port: ready.port,
       url: ready.url,
+      engine: 'bun',
+      pid,
       close: () => new Promise((resolve, reject) => {
         const done = (): void => resolve()
         child.once('exit', done)

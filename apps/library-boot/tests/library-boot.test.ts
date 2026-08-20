@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readlinkSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -38,6 +38,10 @@ test('startLibraryHost serves the official DeepSeek Harness SPA', async () => {
   const host = await startLibraryHost({ port: 0, home, host: '127.0.0.1' })
   try {
     expect(host.port).not.toBe(3080)
+    expect(host.engine).toBe('bun')
+    expect(host.pid).toBeGreaterThan(0)
+    const exe = readlinkSync(`/proc/${String(host.pid)}/exe`)
+    expect(exe.includes('bun')).toBe(true)
     const ui = await fetch(host.url)
     expect(ui.ok).toBe(true)
     const html = await ui.text()
