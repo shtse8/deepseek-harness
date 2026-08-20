@@ -79,7 +79,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
         if (endpoint === undefined || interceptor === undefined || !interceptor.matches(endpoint)) {
           return fallback.fetch(request)
         }
-        if (interceptor.options.authority === 'loopback' && !isTrustedApiRequest(request, [])) {
+        if (interceptor.options.authority === 'loopback' && !isTrustedApiRequest(request, this.trustedHosts)) {
           return Promise.resolve(new Response('forbidden', { status: 403 }))
         }
         return interceptor.fetchHandler.fetch(request)
@@ -94,7 +94,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
     options: ConnectionRpcHandlerOptions,
   ): () => Promise<void> {
     assertChannel(channel)
-    const trustedHosts = options.authority === 'loopback' ? [] : this.trustedHosts
+    const trustedHosts = this.trustedHosts
     const fetchHandler = rpcFetchHandler(channel, handler)
     const route: WebRoute = {
       kind: 'prefix',

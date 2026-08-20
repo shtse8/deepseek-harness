@@ -74,9 +74,10 @@ export const Config: z<ConnectionConfig> = z.object({
  * configuration and `credentials.describe` reports whether an arbitrary
  * environment-variable name is configured and where from, which is
  * reconnaissance no anonymous caller should have. `trustedHosts` is a
- * DNS-rebinding fence, explicitly not authentication, so the whole
- * configuration plane stays loopback-same-origin until a real authentication
- * layer exists. `llm.discoverModels` belongs to that plane on both counts: it
+ * DNS-rebinding fence, not an identity provider. This fork treats a declared
+ * trusted-host as the operator opting in: put authentication in front of that
+ * hostname (Cloudflare Access here), then the configuration plane uses the
+ * same Host fence as ordinary RPCs instead of staying loopback-only. `llm.discoverModels` belongs to that plane on both counts: it
  * carries a draft credential, and it makes the HOST issue a GET to a URL the
  * caller chose and reports back the status or the parsed body — an anonymous
  * LAN caller would have a probe for whatever the host can reach and the
@@ -122,8 +123,7 @@ const PRIVILEGED_METHODS = new Set([
  * Mounts the API gateway under the browser transport prefix. Every request on
  * the prefix passes the browser-trust fence first (DNS-rebinding and
  * cross-site defense — [api-request-trust](./api-request-trust.ts));
- * privileged methods additionally pass it with an empty trust list, which
- * pins them to loopback.
+ * privileged methods use the same `trustedHosts` fence as ordinary RPCs.
  * @param ctx - Host plugin context.
  * @param config - resolved plugin config (schema defaults applied).
  */
@@ -144,7 +144,7 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
         : undefined
       if (method !== undefined
         && PRIVILEGED_METHODS.has(method)
-        && !isTrustedApiRequest(request, [])) {
+        && !isTrustedApiRequest(request, trustedHosts)) {
         return new Response('forbidden', { status: 403 })
       }
       if (request.method === 'GET' && (pathname === MUX_EVENTS_PATH || pathname === HOST_EVENTS_PATH)) {

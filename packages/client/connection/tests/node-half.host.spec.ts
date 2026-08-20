@@ -161,34 +161,32 @@ describe('connection node half', () => {
     await dispose()
   })
 
-  it('pins privileged methods to loopback even for a declared trusted authority', async () => {
+  it('lets a declared trusted authority reach privileged methods', async () => {
     const { routes, dispose } = await mounted({ trustedHosts: ['harness.example'] })
-    // The privileged set: native dialogs plus the whole settings/credential
-    // configuration plane, reads included, plus the one method that makes the
-    // host fetch a caller-chosen URL. The same declared authority reaches
-    // ordinary reads (carrier-level 404 from the empty proxy proves the fence
-    // passed), but each privileged method stays loopback-only and 403s.
+    // This fork treats --trusted-host as the operator opt-in: authentication
+    // belongs in front of that hostname. Privileged methods share the Host
+    // fence with ordinary RPCs; an untrusted Host still 403s.
     for (const method of [
       'host.pickDirectory', 'host.openPath',
       'settings.describe', 'settings.openDocument', 'settings.update', 'settings.replace', 'settings.mutate',
       'credentials.describe', 'credentials.set', 'credentials.unset',
       'llm.discoverModels',
-      // A composition names the plugins a session runs: reading one is
-      // reconnaissance, and copy/remove/openDocument manage the roster and
-      // drive the host desktop.
       'agentPreset.read', 'agentPreset.copy', 'agentPreset.openDocument', 'agentPreset.remove',
     ]) {
-      const denied = fakeResponse()
+      const allowed = fakeResponse()
       await routes[0]!.handler(
         fakeRequest({ host: 'harness.example' }, `${API_PATH}/${method}`),
-        denied.response,
+        allowed.response,
       )
-      expect(denied.state.status).toBe(403)
-      expect(denied.state.body).toBe('forbidden')
+      expect(allowed.state.status).not.toBe(403)
     }
-    const read = fakeResponse()
-    await routes[0]!.handler(fakeRequest({ host: 'harness.example' }), read.response)
-    expect(read.state.status).not.toBe(403)
+    const untrusted = fakeResponse()
+    await routes[0]!.handler(
+      fakeRequest({ host: 'evil.example' }, `${API_PATH}/settings.describe`),
+      untrusted.response,
+    )
+    expect(untrusted.state.status).toBe(403)
+    expect(untrusted.state.body).toBe('forbidden')
     await dispose()
   })
 
@@ -330,9 +328,12 @@ describe('connection node half', () => {
       async () => ({ ok: true, value: null }),
       { authority: 'loopback' },
     )
-    const loopbackOnly = fakeResponse()
-    await route.handler(fakePost({ host: 'harness.example' }, '/api/goals/create', request), loopbackOnly.response)
-    expect(loopbackOnly.state.status).toBe(403)
+    const trusted = fakeResponse()
+    await route.handler(fakePost({ host: 'harness.example' }, '/api/goals/create', request), trusted.response)
+    expect(trusted.state.status).not.toBe(403)
+    const untrustedLoopback = fakeResponse()
+    await route.handler(fakePost({ host: 'other.example' }, '/api/goals/create', request), untrustedLoopback.response)
+    expect(untrustedLoopback.state.status).toBe(403)
     await removeLoopback()
     await fiber.dispose()
   })
@@ -408,8 +409,13 @@ describe('connection node half', () => {
       authority: 'loopback',
     })
     const loopbackRoute = routes.find(candidate => candidate.path === '/loopback')!
-    const publicResponse = fakeResponse()
+    const trustedLoopback = fakeResponse()
     await loopbackRoute.handler(fakePost({ host: 'harness.example' }, '/loopback/read', {
+      type: 'client-request', rpcId: 'rpc-public', method: 'read', payload: {},
+    }), trustedLoopback.response)
+    expect(trustedLoopback.state.status).not.toBe(403)
+    const publicResponse = fakeResponse()
+    await loopbackRoute.handler(fakePost({ host: 'other.example' }, '/loopback/read', {
       type: 'client-request', rpcId: 'rpc-public', method: 'read', payload: {},
     }), publicResponse.response)
     expect(publicResponse.state.status).toBe(403)
@@ -453,40 +459,22 @@ describe('connection node half over a real HTTP server', () => {
     })
   }
 
-  it('answers a declared LAN authority with 403 on every configuration method, over real HTTP', async () => {
-    // The fence's input is a real IncomingMessage parsed by Node from the
-    // wire, not a hand-assembled object: the Host header a LAN browser sends
-    // is exactly what decides loopback-only here, so the boundary is asserted
-    // against the parse the server actually performs.
+  it('answers a declared trusted authority with the empty-proxy carrier on configuration methods, over real HTTP', async () => {
     const { routes, dispose } = await mounted({ trustedHosts: ['harness.example'] })
     const { port, close } = await serve(routes)
     try {
-      // Reads are as privileged as writes: describe returns the exposed
-      // configuration, and credentials.describe probes arbitrary env-var names.
       for (const method of [
         'settings.describe', 'settings.openDocument', 'settings.update', 'settings.replace', 'settings.mutate',
         'credentials.describe', 'credentials.set', 'credentials.unset',
         'host.pickDirectory', 'host.openPath',
-        // Carries a draft credential and turns the host into a fetcher for a
-        // URL the caller picked: an anonymous LAN caller must not reach it.
         'llm.discoverModels',
         'agentPreset.read', 'agentPreset.copy', 'agentPreset.openDocument', 'agentPreset.remove',
+        'llm.providers', 'llm.models', 'agentPreset.list', 'agentPreset.select',
       ]) {
-        expect([method, await call(port, method, 'harness.example')]).toEqual([method, 403])
-      }
-      // The model catalog stays reachable for the same authority: a LAN
-      // client's model picker needs it, and it carries no key or endpoint
-      // state (404 is the empty proxy's carrier answer — the fence passed).
-      // `agentPreset.list` joins the model catalog for the same reason: ids and
-      // trust only, and a LAN client's preset picker needs it. `select` is
-      // reachable too: `session.create` already takes an `agentPreset`, and the
-      // deployment's own default already carries bash, so pinning the switch
-      // would be a fence beside an open gate.
-      for (const method of ['llm.providers', 'llm.models', 'agentPreset.list', 'agentPreset.select']) {
         expect([method, await call(port, method, 'harness.example')]).toEqual([method, 404])
       }
-      // Loopback reaches everything, configuration included.
       expect(await call(port, 'settings.describe', `127.0.0.1:${String(port)}`)).toBe(404)
+      expect(await call(port, 'settings.describe', 'evil.example')).toBe(403)
     } finally {
       await close()
       await dispose()

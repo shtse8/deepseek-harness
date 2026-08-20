@@ -84,6 +84,11 @@ describe('connection client apply', () => {
     expect((await mount()).isLoopback).toBe(false)
   })
 
+  it('treats the authenticated reverse-proxy hostname as Host settings', async () => {
+    ;(globalThis as Win).location = { hostname: 'dsh.kylet.se', search: '' }
+    expect((await mount()).isLoopback).toBe(true)
+  })
+
   it('start() hands out one loop, rejects a second consumer, and stop() aborts the streams', async () => {
     ;(globalThis as Win).location = { hostname: 'localhost', search: '?fixture' }
     const handle = await mount()

@@ -16,3 +16,15 @@ export function isLoopbackHostname(hostname: string): boolean {
     && parts[0] === '127'
     && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255)
 }
+
+/**
+ * Page hostnames whose browsers should use the Host settings document.
+ * Pair with `dsh web --trusted-host <hostname>` and an authenticating
+ * reverse proxy (this deployment: Cloudflare Access on dsh.kylet.se).
+ */
+export const TRUSTED_REMOTE_PAGE_HOSTS = new Set(['dsh.kylet.se'])
+
+/** True when the browser should call Host settings/credentials RPCs. */
+export function pageUsesHostSettings(hostname: string): boolean {
+  return isLoopbackHostname(hostname) || TRUSTED_REMOTE_PAGE_HOSTS.has(hostname)
+}
