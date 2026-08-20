@@ -20,9 +20,10 @@ export function isLoopbackHostname(hostname: string): boolean {
 /**
  * Page hostnames whose browsers should use the Host settings document.
  * Pair with `dsh web --trusted-host <hostname>` and an authenticating
- * reverse proxy (this deployment: Cloudflare Access on dsh.kylet.se).
+ * reverse proxy (this deployment: Cloudflare Access on dsh.kylet.se
+ * and lib.kylet.se).
  */
-export const TRUSTED_REMOTE_PAGE_HOSTS = new Set(['dsh.kylet.se'])
+export const TRUSTED_REMOTE_PAGE_HOSTS = new Set(['dsh.kylet.se', 'lib.kylet.se'])
 
 /** True when the browser should call Host settings/credentials RPCs. */
 export function pageUsesHostSettings(hostname: string): boolean {

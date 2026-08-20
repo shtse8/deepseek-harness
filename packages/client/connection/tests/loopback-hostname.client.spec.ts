@@ -21,6 +21,7 @@ describe('pageUsesHostSettings', () => {
   it('includes loopback and the authenticated reverse-proxy hostname', () => {
     expect(pageUsesHostSettings('127.0.0.1')).toBe(true)
     expect(pageUsesHostSettings('dsh.kylet.se')).toBe(true)
+    expect(pageUsesHostSettings('lib.kylet.se')).toBe(true)
     expect(pageUsesHostSettings('192.0.2.20')).toBe(false)
     expect(pageUsesHostSettings('kylet.se')).toBe(false)
   })
