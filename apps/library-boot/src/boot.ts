@@ -3,23 +3,25 @@
  * (agent loop, tools, session JSONL format, DeepSeek adapter, HTTP + SPA)
  * without walking the profile-bundle loader or patch-tree discovery.
  */
+import { execFile } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
+import { promisify } from 'node:util'
+import { Context } from '../../../vendor/cordis/src/index.ts'
 import { serveStatic } from '../../../packages/host/frontend-static/src/index.ts'
 import { DeepSeekAdapter } from '../../../packages/llm/llm-deepseek/src/adapter.ts'
 import { resolveRetryPolicy } from '../../../packages/llm/llm/src/retry-policy.ts'
 import { credentialRef } from '../../../packages/credentials/credentials/src/index.ts'
 import { getOrCreateAnonymousUserId } from '../../../packages/identity/anonymous-user-id/src/index.ts'
 import { toHeaderLine, sessionDir, logPath } from '../../../packages/session/session-persistence-jsonl/src/format.ts'
-import { SESSION_FORMAT_VERSION, type SessionHeader, type SessionId } from '../../../packages/core/session/src/types.ts'
-import { DEFAULT_MAX_PARALLEL_TOOL_CALLS } from '../../../packages/core/agent-loop/src/constants.ts'
+import { Session, SESSION_FORMAT_VERSION, SessionId } from '../../../packages/core/session/src/index.ts'
 import { ReactLoopAgent } from '../../../packages/core/agent-loop/src/agent.ts'
 import { defineTool } from '../../../packages/core/tools/src/schema.ts'
-import { name as bashToolName } from '../../../packages/shell/tool-bash/src/index.ts'
+import type { ToolDefinition } from '../../../packages/core/tools/src/index.ts'
 
 const LIVE_PORT = 3080
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url))
@@ -42,12 +44,57 @@ export interface LibraryHost {
   usedCordisLoader: false
   usedProfileBundles: false
   spine: {
-    agentLoop: { className: string; maxParallelToolCalls: number }
-    tools: { defineTool: typeof defineTool; bashToolName: string }
+    agentLoop: ReactLoopAgent
+    tools: { bash: ToolDefinition }
     sessionLog: { root: string; artifact: string }
     modelAdapter: DeepSeekAdapter
     http: Server
   }
+}
+
+const execFileAsync = promisify(execFile)
+
+/** Library bash tool: `defineTool` from dsh-tools, not a Cordis `ctx.tools.register` plugin. */
+export function createLibraryBashTool(): ToolDefinition {
+  return defineTool({
+    name: 'bash',
+    description: 'Run a bash command in the library-boot host.',
+    parameters: {
+      command: { type: 'string', required: true, description: 'The bash command to execute.' },
+      description: { type: 'string', required: true, description: 'Short description of the command.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          exitCode: { type: 'integer', required: true },
+          stdout: { type: 'string', required: true },
+          stderr: { type: 'string', required: true },
+        },
+      },
+      render(_args, value) {
+        return [{ type: 'text', text: JSON.stringify(value) }]
+      },
+    },
+    async execute(args) {
+      try {
+        const result = await execFileAsync('bash', ['-lc', args.command], {
+          encoding: 'utf8',
+          timeout: 10_000,
+          maxBuffer: 1024 * 1024,
+        })
+        return { exitCode: 0, stdout: result.stdout, stderr: result.stderr }
+      } catch (error: unknown) {
+        const failed = error as { code?: number; stdout?: string; stderr?: string; message?: string }
+        return {
+          exitCode: typeof failed.code === 'number' ? failed.code : 1,
+          stdout: failed.stdout ?? '',
+          stderr: failed.stderr ?? failed.message ?? String(error),
+        }
+      }
+    },
+  })
 }
 
 export function resolveFrontendDistIndex(): string {
@@ -108,8 +155,8 @@ export async function startLibraryHost(options: LibraryBootOptions): Promise<Lib
     resolveUserId: () => getOrCreateAnonymousUserId({ env: { ...process.env, DSH_HOME: options.home } }),
   })
 
-  const sessionId = 'session-library-boot' as SessionId
-  const header: SessionHeader = {
+  const sessionId = SessionId('session-library-boot')
+  const header = {
     version: SESSION_FORMAT_VERSION,
     id: sessionId,
     createdAt: Date.now(),
@@ -121,6 +168,16 @@ export async function startLibraryHost(options: LibraryBootOptions): Promise<Lib
   await mkdir(dir, { recursive: true })
   const artifact = logPath(sessionRoot, header.cwd, header.id, 'none')
   await writeFile(artifact, `${JSON.stringify(toHeaderLine(header))}\n`, 'utf8')
+
+  const session = Session.create(sessionId, undefined, header)
+  const loopCtx = new Context()
+  const agentLoop = new ReactLoopAgent(
+    loopCtx,
+    sessionId,
+    { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+    session,
+  )
+  const bashTool = createLibraryBashTool()
 
   const renderIndex = async (): Promise<string> => {
     const { readFile } = await import('node:fs/promises')
@@ -137,8 +194,8 @@ export async function startLibraryHost(options: LibraryBootOptions): Promise<Lib
           usedCordisLoader: false,
           usedProfileBundles: false,
           spine: {
-            agentLoop: ReactLoopAgent.name,
-            tools: bashToolName,
+            agentLoop: { class: agentLoop.constructor.name, status: agentLoop.status, id: agentLoop.id },
+            tools: { bash: bashTool.name },
             sessionLog: artifact,
             modelAdapter: modelAdapter.constructor.name,
           },
@@ -181,11 +238,8 @@ export async function startLibraryHost(options: LibraryBootOptions): Promise<Lib
       server.close((error) => error ? reject(error) : resolve())
     }),
     spine: {
-      agentLoop: {
-        className: ReactLoopAgent.name,
-        maxParallelToolCalls: DEFAULT_MAX_PARALLEL_TOOL_CALLS,
-      },
-      tools: { defineTool, bashToolName },
+      agentLoop,
+      tools: { bash: bashTool },
       sessionLog: { root: sessionRoot, artifact },
       modelAdapter,
       http: server,
