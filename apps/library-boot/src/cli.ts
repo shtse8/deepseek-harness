@@ -24,6 +24,7 @@ const home = argValue('--home', process.env.DSH_LIBRARY_BOOT_HOME ?? join(REPO_R
 
 const host = await startLibraryHost({ port, home, host: '127.0.0.1' })
 console.log(`dsh library-boot: ${host.url}`)
+console.log(`chat POST ${host.url}/api/turn`)
 console.log(`spine agentLoop=${host.spine.agentLoop.constructor.name} status=${host.spine.agentLoop.status} tools=${host.spine.tools.bash.name}`)
 
 const stop = (): void => {
