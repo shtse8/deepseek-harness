@@ -116,6 +116,50 @@ function assertNotLivePort(port: number): void {
   }
 }
 
+function renderLibraryBootPage(spine: {
+  agentLoop: string
+  status: string
+  sessionId: string
+  bash: string
+  adapter: string
+}): string {
+  const rows = [
+    ['surface', 'library-boot (Bun)'],
+    ['agent loop', `${spine.agentLoop} (${spine.status})`],
+    ['session', spine.sessionId],
+    ['tool', spine.bash],
+    ['model adapter', spine.adapter],
+  ]
+  const list = rows.map(([k, v]) => `<li><span>${k}</span> ${v}</li>`).join('')
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>DeepSeek Harness</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font: 16px/1.45 ui-sans-serif, system-ui, sans-serif; background: #111; color: #eee; }
+    main { max-width: 40rem; margin: 12vh auto; padding: 0 1.5rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; }
+    p, li { color: #bbb; }
+    span { color: #888; display: inline-block; min-width: 8.5rem; }
+    a { color: #8ec8ff; }
+    code { font: 13px/1.4 ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>DeepSeek Harness</h1>
+    <p>Library-boot host. This page does not load the plugin SPA (no client plugin graph).</p>
+    <ul>${list}</ul>
+    <p><a href="/api/library-boot"><code>/api/library-boot</code></a></p>
+  </main>
+</body>
+</html>
+`
+}
+
 function assertIsolatedHome(home: string): void {
   const live = join(homedir(), '.dsh')
   if (home === live || home.startsWith(live + '/')) {
@@ -179,10 +223,13 @@ export async function startLibraryHost(options: LibraryBootOptions): Promise<Lib
   )
   const bashTool = createLibraryBashTool()
 
-  const renderIndex = async (): Promise<string> => {
-    const { readFile } = await import('node:fs/promises')
-    return readFile(distIndex, 'utf8')
-  }
+  const renderIndex = async (): Promise<string> => renderLibraryBootPage({
+    agentLoop: agentLoop.constructor.name,
+    status: agentLoop.status,
+    sessionId: String(agentLoop.id),
+    bash: bashTool.name,
+    adapter: modelAdapter.constructor.name,
+  })
 
   const server = createServer((req, res) => {
     void (async () => {

@@ -65,6 +65,9 @@ test('startLibraryHost constructs spine libraries and serves the harness surface
     expect(ui.ok).toBe(true)
     const html = await ui.text()
     expect(html.includes('DeepSeek Harness')).toBe(true)
+    expect(html.includes('library-boot')).toBe(true)
+    expect(html.includes('__ModuleLoader__')).toBe(false)
+    expect(html.includes('Failed to load plugins')).toBe(false)
 
     const api = await fetch(`${host.url}/api/library-boot`)
     expect(api.ok).toBe(true)
