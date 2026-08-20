@@ -1,0 +1,12 @@
+{
+  "name": "@deepseek-ai/dsh-library-boot",
+  "private": true,
+  "type": "module",
+  "description": "Cordis-profile-free library boot of the harness spine, launched with Bun",
+  "exports": {
+    ".": "./src/boot.ts"
+  },
+  "bin": {
+    "dsh-library-boot": "./src/cli.ts"
+  }
+}
